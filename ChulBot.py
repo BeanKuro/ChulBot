@@ -1,4 +1,4 @@
-import discord
+import discord 
 from discord.ext import commands
 import yt_dlp as youtube_dl
 from dotenv import load_dotenv
@@ -11,9 +11,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = commands.Bot(command_prefix='!', intents=intents)
 
-# 노래 대기열과 현재 재생 중인 노래 제목
-queue = []
-current_playing = None
+# 큐를 위한 리스트 초기화
+queue = []  # [ (제목, URL), ... ]
+
+FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
 @client.event
 async def on_ready():
@@ -22,7 +23,7 @@ async def on_ready():
 @client.command()
 async def join(ctx):
     if not ctx.author.voice:
-        await ctx.send("당신은 현재 보이스챗에 없어요!")
+        await ctx.send("당신은 현재 보이스 채널에 없어요!")
         return
     channel = ctx.author.voice.channel
     await channel.connect()
@@ -32,50 +33,42 @@ async def leave(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
     else:
-        await ctx.send("저는 현재 보이스챗에 없어요!")
+        await ctx.send("저는 보이스 채널에 없어요!")
+
+def play_next(ctx):
+    voice_channel = ctx.voice_client
+    if queue:  # 큐에 곡이 있을 경우
+        next_title, next_url = queue.pop(0)  # 큐에서 첫 번째 곡 가져오고 제거
+        voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=next_url, **FFMPEG_OPTIONS), after=lambda e: play_next(ctx))
+        # 다음 곡이 끝나면 play_next 호출
+        asyncio.run_coroutine_threadsafe(ctx.send(f"현재 재생 중: {next_title}"), client.loop)
+    else:
+        asyncio.run_coroutine_threadsafe(ctx.send("리스트에 저장된 곡이 없습니다."), client.loop)
 
 @client.command()
 async def play(ctx, url):
-    global queue, current_playing
     try:
         YDL_OPTIONS = {'format': 'bestaudio', 'noplaylist': 'True'}
-        FFMPEG_OPTIONS = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': '-vn -loglevel debug'
-        }
-
+        
+        voice_channel = ctx.voice_client
+        
         with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
             info = ydl.extract_info(url, download=False)
-            title = info['title']
+            title = info.get('title', '제목을 찾을 수 없습니다')
             url2 = info['url']
-            queue.append((title, url2))  # 제목과 URL을 대기열에 추가
-            await ctx.send(f"재생목록에 추가: {title}")
+            
+            # 큐에 제목과 URL 추가
+            queue.append((title, url2))
 
-            # 현재 재생 중이지 않으면 재생 시작
-            if not ctx.voice_client.is_playing():
-                current_playing = title  # 현재 재생 중인 노래 제목 저장
-                await play_next(ctx)
-
+            # 현재 곡이 재생 중이지 않으면 첫 번째 곡 재생
+            if not voice_channel.is_playing():
+                next_title, next_url = queue.pop(0)  # 첫 번째 곡 가져오고 제거
+                voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=next_url, **FFMPEG_OPTIONS), after=lambda e: play_next(ctx))
+                await ctx.send(f"현재 곡: {next_title}")
+            else:
+                await ctx.send(f"곡이 리스트에 저장되었습니다.\n {title}")
     except Exception as e:
         await ctx.send(f"An error occurred: {str(e)}")
-
-async def play_next(ctx):
-    global queue, current_playing
-    if queue:
-        title, url2 = queue.pop(0)
-        ctx.voice_client.play(
-            discord.FFmpegPCMAudio(
-                executable="C:\\discordBot\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe",
-                source=url2,
-                options="-filter:a 'volume=0.5'"  # 볼륨 50%로 설정
-            ),
-            after=lambda e: client.loop.create_task(play_next(ctx))
-        )
-        current_playing = title  # 현재 재생 중인 노래 제목 업데이트
-        await ctx.send(f"현재 재생 중: {title}")
-    else:
-        current_playing = None  # 대기열이 비어있으면 현재 재생 중인 노래 없음
-        await ctx.send("재생목록이 비어있어요!")
 
 @client.command()
 async def pause(ctx):
@@ -94,28 +87,38 @@ async def stop(ctx):
     voice_channel = ctx.voice_client
     if voice_channel.is_playing():
         voice_channel.stop()
+        queue.clear()  # 큐의 모든 노래 삭제
+        await ctx.send("곡을 멈추고 리스트를 전체 삭제합니다.")
+    else:
+        await ctx.send("현재 음악 재생 중이 아닙니다.")
 
 @client.command()
 async def list(ctx):
-    global queue, current_playing
-    if current_playing:
-        current_title = current_playing
+    if not queue:
+        await ctx.send("리스트에 저장된 노래가 없습니다.")
     else:
-        current_title = "None"
-
-    if queue:
-        titles = "\n".join([f"{i+1}. {title}" for i, (title, _) in enumerate(queue)])
-        await ctx.send(f"현재 재생 중: {current_title}\n\n현재 재생목록:\n{titles}")
-    else:
-        await ctx.send(f"현재 재생 중: {current_title}\n\n재생목록이 비어있어요!")
+        message = "**곡 리스트:**\n"
+        for i, (title, _) in enumerate(queue):
+            message += f"{i+1}. {title}\n"
+        await ctx.send(message)
 
 @client.command()
 async def skip(ctx):
     voice_channel = ctx.voice_client
-    if voice_channel.is_playing():
-        voice_channel.stop()
-        await ctx.send("현재 노래를 스킵합니다.")
+    if not voice_channel or not voice_channel.is_connected():
+        await ctx.send("저는 보이스 채널에 없어요!")
+        return
+    if not queue:
+        await ctx.send("스킵 할 곡이 없습니다!")
+        return
+
+    voice_channel.stop()
+    
+    if queue:  # 큐에 다음 곡이 있을 경우
+        next_title, next_url = queue.pop(0)  # 큐에서 첫 번째 노래 가져오고 제거
+        voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=next_url, **FFMPEG_OPTIONS))
+        await ctx.send(f"스킵!\n 현재 곡: {next_title}")
     else:
-        await ctx.send("저는 현재 어떤 노래도 틀고 있지 않아요!")
+        await ctx.send("리스트에 저장된 노래가 없습니다.")
 
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
