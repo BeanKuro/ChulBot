@@ -63,8 +63,14 @@ async def play_next(ctx):
     global queue, current_playing
     if queue:
         title, url2 = queue.pop(0)
-        ctx.voice_client.play(discord.FFmpegPCMAudio(executable="C:\\discordBot\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe", source=url2),
-                               after=lambda e: client.loop.create_task(play_next(ctx)))
+        ctx.voice_client.play(
+            discord.FFmpegPCMAudio(
+                executable="C:\\discordBot\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe",
+                source=url2,
+                options="-filter:a 'volume=0.5'"  # 볼륨 50%로 설정
+            ),
+            after=lambda e: client.loop.create_task(play_next(ctx))
+        )
         current_playing = title  # 현재 재생 중인 노래 제목 업데이트
         await ctx.send(f"현재 재생 중: {title}")
     else:
