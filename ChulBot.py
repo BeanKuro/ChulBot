@@ -22,7 +22,7 @@ async def on_ready():
 @client.command()
 async def join(ctx):
     if not ctx.author.voice:
-        await ctx.send("You are not in a voice channel!")
+        await ctx.send("당신은 현재 보이스챗에 없어요!")
         return
     channel = ctx.author.voice.channel
     await channel.connect()
@@ -32,7 +32,7 @@ async def leave(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
     else:
-        await ctx.send("I'm not in a voice channel!")
+        await ctx.send("저는 현재 보이스챗에 없어요!")
 
 @client.command()
 async def play(ctx, url):
@@ -49,7 +49,7 @@ async def play(ctx, url):
             title = info['title']
             url2 = info['url']
             queue.append((title, url2))  # 제목과 URL을 대기열에 추가
-            await ctx.send(f"Added to queue: {title}")
+            await ctx.send(f"재생목록에 추가: {title}")
 
             # 현재 재생 중이지 않으면 재생 시작
             if not ctx.voice_client.is_playing():
@@ -66,10 +66,10 @@ async def play_next(ctx):
         ctx.voice_client.play(discord.FFmpegPCMAudio(executable="C:\\discordBot\\ffmpeg-master-latest-win64-gpl-shared\\bin\\ffmpeg.exe", source=url2),
                                after=lambda e: client.loop.create_task(play_next(ctx)))
         current_playing = title  # 현재 재생 중인 노래 제목 업데이트
-        await ctx.send(f"Now playing: {title}")
+        await ctx.send(f"현재 재생 중: {title}")
     else:
         current_playing = None  # 대기열이 비어있으면 현재 재생 중인 노래 없음
-        await ctx.send("Queue is empty.")
+        await ctx.send("재생목록이 비어있어요!")
 
 @client.command()
 async def pause(ctx):
@@ -99,17 +99,17 @@ async def list(ctx):
 
     if queue:
         titles = "\n".join([f"{i+1}. {title}" for i, (title, _) in enumerate(queue)])
-        await ctx.send(f"Currently playing: {current_title}\n\nCurrent queue:\n{titles}")
+        await ctx.send(f"현재 재생 중: {current_title}\n\n현재 재생목록:\n{titles}")
     else:
-        await ctx.send(f"Currently playing: {current_title}\n\nQueue is empty.")
+        await ctx.send(f"현재 재생 중: {current_title}\n\n재생목록이 비어있어요!")
 
 @client.command()
 async def skip(ctx):
     voice_channel = ctx.voice_client
     if voice_channel.is_playing():
         voice_channel.stop()
-        await ctx.send("Skipped the current song.")
+        await ctx.send("현재 노래를 스킵합니다.")
     else:
-        await ctx.send("I'm not currently playing any music.")
+        await ctx.send("저는 현재 어떤 노래도 틀고 있지 않아요!")
 
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
