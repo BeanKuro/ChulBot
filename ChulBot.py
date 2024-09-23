@@ -6,6 +6,7 @@ from discord.ext import commands
 import yt_dlp as youtube_dl
 from dotenv import load_dotenv
 import os
+import asyncio
 
 load_dotenv('DISCORD_BOT_TOKEN.env')
 print("DISCORD_BOT_TOKEN:", os.getenv('DISCORD_BOT_TOKEN'))
@@ -23,13 +24,24 @@ FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconne
 async def on_ready():
     print(f'Logged in as {client.user}')
 
+#v1.0.2 추가(자동퇴장기능)
+async def auto_disconnect_timer(ctx, timeout=300):  # 300초(5분) 후에 퇴장
+    await asyncio.sleep(timeout)  # 타이머 설정
+    if ctx.voice_client and not ctx.voice_client.is_playing():
+        await ctx.voice_client.disconnect()
+        await ctx.send("일정 시간 동안 활동이 없어 보이스 채널에서 퇴장할게요.")
+        
+
 @client.command()
-async def join(ctx):
+async def join(ctx): #v1.0.2 추가(자동퇴장기능)
     if not ctx.author.voice:
         await ctx.send("당신은 현재 보이스 채널에 없어요!")
         return
     channel = ctx.author.voice.channel
     await channel.connect()
+    # 자동 퇴장을 위한 타이머 시작
+    asyncio.create_task(auto_disconnect_timer(ctx))
+
 
 @client.command()
 async def leave(ctx):
@@ -123,5 +135,21 @@ async def skip(ctx):
         await ctx.send(f"스킵!\n 현재 곡: {next_title}")
     else:
         await ctx.send("리스트에 저장된 노래가 없습니다.")
+
+@client.event #v1.0.2 추가(자동퇴장기능 - 모든 유저 퇴장 시 봇 퇴장)
+async def on_voice_state_update(member, before, after):
+    voice_client = member.guild.voice_client
+
+    # 사용자가 음성 채널을 나갔을 때
+    if before.channel is not None and len(before.channel.members) == 1 and voice_client and voice_client.channel == before.channel:
+        # 채널에 봇만 남았을 때 퇴장
+        await voice_client.disconnect()
+
+        # 봇이 속한 텍스트 채널로 메시지 보내기
+        text_channel = member.guild.text_channels[0]  # 첫 번째 텍스트 채널로 메시지 보냄 (필요시 변경 가능)
+
+        # 음성 채널에 사용자가 들어왔을 때 별도의 동작을 추가할 수도 있음
+
+
 
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
