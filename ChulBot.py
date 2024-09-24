@@ -32,7 +32,8 @@ async def on_ready():
   #await client.change_presence(status=discord.Status.dnd) #다른용무
   #await client.change_presence(status=discord.Status.offline) #오프라인
 
-  await client.change_presence(activity=discord.Game(name="승탱이 때리기 "))
+  await client.change_presence(activity=discord.CustomActivity(name="도움말 == !help"))
+  #await client.change_presence(activity=discord.Game(name="/help "))
   #await client.change_presence(activity=discord.Streaming(name="스트림 방송중", url='링크'))
   #await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="노래 듣는중"))
   #await client.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="영상 시청중"))
