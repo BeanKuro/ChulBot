@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import os
 import asyncio
 import functools
+import aiohttp  # 비동기 HTTP 요청 처리
 
 load_dotenv('DISCORD_BOT_TOKEN.env')
 print("DISCORD_BOT_TOKEN:", os.getenv('DISCORD_BOT_TOKEN'))
@@ -19,27 +20,30 @@ client = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 # 큐를 위한 리스트 초기화
 queue = []  # [ (제목, URL), ... ]
 current_song_title = None  # 현재 재생 중인 곡 제목 저장
+search_results = {}  # 검색 결과를 저장하는 전역 변수
 
 FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
 @client.event
 async def on_ready():
     await client.change_presence(status=discord.Status.online)  # 온라인
-    await client.change_presence(activity=discord.CustomActivity(name="도움말 == !help"))
+    await client.change_presence(activity=discord.CustomActivity(name="도움말 == !명령어"))
     print("봇 이름:", client.user.name, "봇 아이디:", client.user.id, "봇 버전:", discord.__version__)
 
-@client.command()  # !help 명령어 기능 (v1.0.3 추가)
-async def help(ctx):
+@client.command()  # !명령어 - 명령어 기능 (v1.0.3 추가)
+async def 명령어(ctx):
     help_message = (
         "**사용 가능한 명령어:**\n"
-        "!join - 봇을 보이스 채널에 초대하기\n"
-        "!play [URL] - 음악 재생\n"
-        "!pause - 음악 일시정지\n"
-        "!resume - 음악 일시정지 해제\n"
-        "!skip - 다음 곡으로 건너뛰기\n"
-        "!list - 예약된 곡 목록 보기\n"
-        "!stop - 음악 중지 및 리스트 삭제\n"
-        "!leave - 봇 내보내기"
+        "!입장 - 봇을 보이스 채널에 초대하기\n"
+        "!재생 [URL] - 음악 재생\n"
+        "!검색 [곡 이름] - 유튜브 음악 검색\n"
+        "!선택 [번호 선택] - 검색한 음악 재생\n"
+        "!멈춰 - 음악 일시정지\n"
+        "!계속 - 음악 일시정지 해제\n"
+        "!스킵 - 다음 곡으로 건너뛰기\n"
+        "!리스트 - 예약된 곡 목록 보기\n"
+        "!삭제 - 음악 중지 및 리스트 삭제\n"
+        "!나가 - 봇 내보내기"
     )
     await ctx.send(help_message)
 
@@ -56,7 +60,7 @@ async def auto_disconnect_timer(ctx, timeout=300):  # 300초(5분) 후에 퇴장
         await ctx.send("일정 시간 동안 활동이 없어 보이스 채널에서 퇴장할게요.")
 
 @client.command()
-async def join(ctx):  # v1.0.2 추가(자동퇴장기능)
+async def 입장(ctx):  # v1.0.2 추가(자동퇴장기능)
     if not ctx.author.voice:
         await ctx.send("당신은 현재 보이스 채널에 없어요!")
         return
@@ -66,7 +70,7 @@ async def join(ctx):  # v1.0.2 추가(자동퇴장기능)
     asyncio.create_task(auto_disconnect_timer(ctx))
 
 @client.command()
-async def leave(ctx):
+async def 나가(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
     else:
@@ -86,7 +90,7 @@ async def play_next(ctx):
             await ctx.send("리스트에 저장된 곡이 없습니다.")
 
 @client.command()
-async def play(ctx, url):
+async def 재생(ctx, url):
     global current_song_title
     try:
         # YDL_OPTIONS에 'extract_flat' 옵션 추가하여 재생목록의 메타데이터만 가져오도록 설정
@@ -158,19 +162,19 @@ async def play(ctx, url):
 
 
 @client.command()
-async def pause(ctx):
+async def 멈춰(ctx):
     voice_channel = ctx.voice_client
     if voice_channel.is_playing():
         voice_channel.pause()
 
 @client.command()
-async def resume(ctx):
+async def 계속(ctx):
     voice_channel = ctx.voice_client
     if voice_channel.is_paused():
         voice_channel.resume()
 
 @client.command()
-async def stop(ctx):
+async def 삭제(ctx):
     voice_channel = ctx.voice_client
     if voice_channel.is_playing():
         voice_channel.stop()
@@ -180,7 +184,7 @@ async def stop(ctx):
         await ctx.send("현재 음악 재생 중이 아닙니다.")
 
 @client.command()
-async def list(ctx):
+async def 리스트(ctx):
     voice_channel = ctx.voice_client
 
     message = ""
@@ -198,7 +202,7 @@ async def list(ctx):
     await ctx.send(message)
 
 @client.command()
-async def skip(ctx):
+async def 스킵(ctx):
     voice_channel = ctx.voice_client
     if not voice_channel or not voice_channel.is_connected():
         await ctx.send("저는 보이스 채널에 없어요!")
@@ -227,5 +231,81 @@ async def on_voice_state_update(member, before, after):
         await voice_client.disconnect()
         # 봇이 속한 텍스트 채널로 메시지 보내기
         text_channel = member.guild.text_channels[0]  # 첫 번째 텍스트 채널로 메시지 보냄 (필요시 변경 가능)
+
+@client.command() #검색 및 선택 기능 (v1.1.1)
+async def 검색(ctx, *, query=None):
+    """유튜브에서 노래를 검색하고 선택할 수 있는 기능"""
+    global search_results
+    YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')  # API 키 가져오기
+
+    if not YOUTUBE_API_KEY:
+        await ctx.send("YouTube API Key가 설정되지 않았습니다. 관리자에게 문의하세요.")
+        return
+
+    if not query:
+        await ctx.send("사용법: `!검색 [키워드]`를 입력하세요.")
+        return
+
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "videoCategoryId": "10",  # 음악 카테고리
+        "maxResults": 5,  # 최대 5개 결과 반환
+        "key": YOUTUBE_API_KEY,
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(search_url, params=params) as response:
+            if response.status != 200:
+                await ctx.send("검색 중 오류가 발생했습니다.")
+                return
+
+            data = await response.json()
+            results = data.get("items", [])
+
+            if not results:
+                await ctx.send("검색 결과가 없습니다.")
+                return
+
+            message = "**🔍 검색 결과:**\n"
+            search_results[ctx.author.id] = []  # 현재 사용자의 검색 결과 초기화
+
+            for i, item in enumerate(results, start=1):
+                title = item["snippet"]["title"]
+                video_id = item["id"]["videoId"]
+                video_url = f"https://www.youtube.com/watch?v={video_id}"
+                message += f"{i}. {title}\n"  # 제목만 추가
+                search_results[ctx.author.id].append((title, video_url))
+
+            await ctx.send(message)
+            await ctx.send("재생하려면 `!선택 [번호]`를 입력하세요.")
+
+@client.command()
+async def 선택(ctx, number: int):
+    """검색된 목록에서 노래를 선택하여 재생"""
+    global search_results
+    if ctx.author.id not in search_results or not search_results[ctx.author.id]:
+        await ctx.send("먼저 `!검색` 명령어를 사용하여 노래를 검색하세요.")
+        return
+
+    try:
+        selected_song = search_results[ctx.author.id][number - 1]  # 선택된 노래
+        title, url = selected_song
+
+        # 봇이 음성 채널에 없으면 자동으로 연결
+        if not ctx.voice_client:
+            await 입장(ctx)
+
+        # 선택된 노래 재생
+        await 재생(ctx, url)
+        del search_results[ctx.author.id]  # 검색 결과 초기화
+
+    except IndexError:
+        await ctx.send("유효하지 않은 번호입니다. 다시 시도하세요.")
+    except Exception as e:
+        await ctx.send(f"오류가 발생했습니다: {str(e)}")
 
 client.run(os.getenv('DISCORD_BOT_TOKEN'))
