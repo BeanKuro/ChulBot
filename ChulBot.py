@@ -102,64 +102,64 @@ async def 재생(ctx, url):
             with youtube_dl.YoutubeDL(YDL_OPTIONS) as ydl:
                 return ydl.extract_info(url, download=False)
 
-        # 재생목록 메타데이터를 먼저 비동기적으로 가져옴
+        # 재생목록 메타데이터를 비동기적으로 가져옴
         first_info = await asyncio.to_thread(extract_info, url)
 
-        if 'entries' in first_info:
-            # 재생목록일 경우 첫 번째 항목만 가져옴
+        if 'entries' in first_info:  # 재생목록인 경우
             first_entry = first_info['entries'][0]
-            first_url = first_entry['url']
             first_title = first_entry.get('title', '제목을 찾을 수 없습니다')
-            current_song_title = first_title
-
-            # 실제 오디오 URL을 가져오기 위한 YDL_OPTIONS 재설정
-            YDL_OPTIONS['extract_flat'] = False
-
-            # 첫 번째 곡을 비동기적으로 가져와서 재생
-            song_info = await asyncio.to_thread(extract_info, first_url)
-            audio_url = song_info['url']
-
-            voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=audio_url, **FFMPEG_OPTIONS), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
-            await ctx.send(f"**현재 곡:** {first_title}")
+            first_url = first_entry['url']
 
             # 백그라운드에서 나머지 곡들을 큐에 추가
             async def add_remaining_entries(entries):
                 for entry in entries[1:]:
+                    if len(queue) >= 70:  # 최대 70개 제한
+                        await ctx.send("⚠️ 큐에 더 이상 곡을 추가할 수 없습니다. 최대 70곡이 허용됩니다.")
+                        break
+
                     url2 = entry['url']
-                    song_info = await asyncio.to_thread(extract_info, url2)
-                    title = song_info.get('title', '제목을 찾을 수 없습니다')
-                    audio_url = song_info['url']
-                    queue.append((title, audio_url))
-                    # 다른 작업에 이벤트 루프 양보
+                    try:
+                        song_info = await asyncio.to_thread(extract_info, url2)
+                        title = song_info.get('title', '제목을 찾을 수 없습니다')
+                        audio_url = song_info['url']
+                        queue.append((title, audio_url))
+                    except Exception as e:
+                        await ctx.send(f"⚠️ 곡을 추가하는 도중 오류가 발생했습니다: {entry.get('title', '알 수 없음')} (오류: {str(e)})")
+                        continue  # 다음 곡 처리
                     await asyncio.sleep(0)
 
-                # 모든 곡 추가 완료 후 알림
-                await ctx.send("모든 곡이 큐에 추가되었습니다.")
-                # 대기 중인 곡 리스트 출력
-                if queue:
-                    message = "\n**대기 중인 곡 리스트:**\n"
-                    for i, (q_title, _) in enumerate(queue):
-                        message += f"{i + 1}. {q_title}\n"
-                    await ctx.send(message)
+                await ctx.send("🎵 재생목록의 모든 곡이 큐에 추가되었습니다.")
 
-            # 비동기적으로 나머지 곡들을 큐에 추가
-            asyncio.create_task(add_remaining_entries(first_info['entries']))
+            # 이미 곡이 재생 중일 때
+            if voice_channel and voice_channel.is_playing():
+                await ctx.send(f"🎶 현재 재생 중입니다: **{current_song_title}**\n재생목록의 곡들을 큐에 추가합니다.")
+                asyncio.create_task(add_remaining_entries(first_info['entries']))
+            else:
+                # 첫 번째 곡 재생
+                song_info = await asyncio.to_thread(extract_info, first_url)
+                audio_url = song_info['url']
+                current_song_title = first_title
+                voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=audio_url, **FFMPEG_OPTIONS), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
+                await ctx.send(f"**현재 곡:** {first_title}")
+                asyncio.create_task(add_remaining_entries(first_info['entries']))
         else:
-            # 단일 동영상일 경우 기존 방식으로 처리
+            # 단일 곡인 경우
             song_info = first_info
             title = song_info.get('title', '제목을 찾을 수 없습니다')
             audio_url = song_info['url']
-            if not voice_channel.is_playing():
+            if voice_channel and voice_channel.is_playing():
+                if len(queue) < 70:
+                    queue.append((title, audio_url))
+                    await ctx.send(f"🎵 곡이 큐에 추가되었습니다: **{title}**")
+                else:
+                    await ctx.send("⚠️ 큐에 더 이상 곡을 추가할 수 없습니다. 최대 70곡이 허용됩니다.")
+            else:
                 current_song_title = title
                 voice_channel.play(discord.FFmpegPCMAudio(executable="ffmpeg", source=audio_url, **FFMPEG_OPTIONS), after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), client.loop))
                 await ctx.send(f"**현재 곡:** {title}")
-            else:
-                queue.append((title, audio_url))
-                await ctx.send(f"곡이 리스트에 저장되었습니다: {title}")
 
     except Exception as e:
         await ctx.send(f"오류가 발생했습니다: {str(e)}")
-
 
 @client.command()
 async def 멈춰(ctx):
@@ -185,20 +185,31 @@ async def 삭제(ctx):
 
 @client.command()
 async def 리스트(ctx):
-    voice_channel = ctx.voice_client
+    global queue, current_song_title
+
+    if not current_song_title and not queue:
+        await ctx.send("현재 재생 중인 곡이 없고, 대기 중인 곡도 없습니다.")
+        return
 
     message = ""
     
     if current_song_title:  # 현재 재생 중인 곡이 있을 때
-        message += f"**현재 재생 중:** {current_song_title}\n\n"  # 현재 곡 제목 추가
+        message += f"**현재 재생 중:** {current_song_title}\n\n"
 
     if not queue:
         message += "대기 중인 곡 리스트가 없습니다."
     else:
-        message += "**대기 중인 곡 리스트:**\n"  # 대기 중인 곡 리스트 구분
-        for i, (title, _) in enumerate(queue):
-            message += f"{i + 1}. {title}\n"
-    
+        message += "**대기 중인 곡 리스트:**\n"
+
+        # 최대 10개까지만 출력
+        max_display = 10
+        for i, (title, _) in enumerate(queue[:max_display], start=1):
+            message += f"{i}. {title}\n"
+
+        # 남은 곡이 있을 경우 추가 알림
+        if len(queue) > max_display:
+            message += f"\n...그리고 {len(queue) - max_display}개의 곡이 더 예약되어 있습니다.\n"
+
     await ctx.send(message)
 
 @client.command()
