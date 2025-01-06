@@ -1,7 +1,9 @@
 Discord Music Bot.MK1 (Python)   
 Using FFMPEG
 </br>
+</br>
 사용 가능한 명령어:   
+</br>
 !입장 - 봇을 보이스 채널에 초대하기   
 !재생 [URL] - 음악 재생   
 !검색 [곡 이름] - 유튜브 음악 검색   
